@@ -3,19 +3,89 @@ name: build-test-deploy
 on: push
 
 jobs:
-  build: 
-    runs-on:  ubuntu-latest
+  build:
+    runs-on: ubuntu-latest
 
     steps:
       - name: checkout repo
         uses: actions/checkout@v4
+
       - name: use node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
-      - run: npm install
-      - run: npm run build
-  
+          node-version: "20.x"
+
+      - name: Time npm install
+        id: build_install
+        shell: bash
+        run: |
+          s=$(date +%s)
+          npm install
+          e=$(date +%s)
+          dur=$((e - s))
+          echo "BUILD_INSTALL_SEC=$dur" >> "$GITHUB_ENV"
+          echo "::notice title=Step duration::build: npm install took ${dur}s"
+
+      - name: Time npm run build
+        id: build_build
+        shell: bash
+        run: |
+          s=$(date +%s)
+          npm run build
+          rc=$?
+          e=$(date +%s)
+          dur=$((e - s))
+          echo "BUILD_BUILD_SEC=$dur" >> "$GITHUB_ENV"
+          if [ "$rc" -eq 0 ]; then
+            echo "::notice title=Step duration::build: npm run build took ${dur}s"
+          else
+            echo "::error title=Build failed::build: npm run build failed after ${dur}s"
+          fi
+          exit $rc
+
+      - name: Build job summary
+        if: always()
+        shell: bash
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+
+          {
+            echo "# 🧱 Build Job Summary"
+            echo ""
+            echo "> **Run:** ${RUN_URL}"
+            echo ""
+            echo "## ⏱️ Timings"
+            echo ""
+            echo "- **npm install:** **${BUILD_INSTALL_SEC:-n/a}s**"
+            echo "- **npm run build:** **${BUILD_BUILD_SEC:-n/a}s**"
+            echo ""
+            echo "## 🧾 Context"
+            echo ""
+            echo "- **Repository:** \`${{ github.repository }}\`"
+            echo "- **Workflow:** \`${{ github.workflow }}\`"
+            echo "- **Job:** \`${{ github.job }}\`"
+            echo "- **Event:** \`${{ github.event_name }}\`"
+            echo "- **Actor:** \`${{ github.actor }}\`"
+            echo "- **Ref:** \`${{ github.ref_name }}\`"
+            echo "- **SHA:** ${COMMIT_URL}"
+            echo ""
+            echo "## 🧰 Runtime"
+            echo ""
+            echo "- **Node:** \`$(node -v 2>/dev/null || echo n/a)\`"
+            echo "- **npm:** \`$(npm -v 2>/dev/null || echo n/a)\`"
+            echo ""
+            echo "<details><summary>🔎 Runner details</summary>"
+            echo ""
+            echo "- OS: \`$(uname -a)\`"
+            echo "- UTC time: \`$(date -u)\`"
+            echo ""
+            echo "</details>"
+            echo ""
+            echo "---"
+            echo "_Generated via \`GITHUB_STEP_SUMMARY\`._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   test:
     needs: build
     runs-on: ubuntu-latest
@@ -23,29 +93,99 @@ jobs:
     steps:
       - name: checkout repo
         uses: actions/checkout@v4
+
       - name: use node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
-      - run: npm install
+          node-version: "20.x"
+
+      - name: Time npm install
+        id: test_install
+        shell: bash
+        run: |
+          s=$(date +%s)
+          npm install
+          e=$(date +%s)
+          dur=$((e - s))
+          echo "TEST_INSTALL_SEC=$dur" >> "$GITHUB_ENV"
+          echo "::notice title=Step duration::test: npm install took ${dur}s"
+
       - name: Run tests (timed)
         id: timed_tests
         shell: bash
         run: |
-          start=$(date +%s)
+          s=$(date +%s)
           npm test
-          test_exit=$?
+          rc=$?
+          e=$(date +%s)
+          dur=$((e - s))
+          echo "TEST_SEC=$dur" >> "$GITHUB_ENV"
 
-          end=$(date +%s)
-          duration=$((end - start))
+          # UI annotation - warn if tests are slow
+          if [ "$dur" -gt 300 ]; then
+            echo "::warning title=Slow tests::npm test took ${dur}s (>300s)"
+          elif [ "$rc" -eq 0 ]; then
+            echo "::notice title=Test duration::npm test took ${dur}s"
+          else
+            echo "::error title=Tests failed::npm test failed after ${dur}s"
+          fi
 
-          echo "### Test step duration" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`npm test\` took **${duration}s**" >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
 
-          echo "::notice title=Step duration::npm test took ${duration}s"
+      - name: Test job summary
+        if: always()
+        shell: bash
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
 
-          exit $test_exit
+          # Pretty status banner
+          if [ "${{ job.status }}" = "success" ]; then
+            ICON="✅"
+            WORD="PASS"
+            CALLOUT="> [!NOTE]\n> Tests passed successfully."
+          else
+            ICON="❌"
+            WORD="FAIL"
+            CALLOUT="> [!WARNING]\n> Tests failed. See logs for details."
+          fi
+
+          {
+            echo "# ${ICON} Test Job Summary — ${WORD}"
+            echo ""
+            echo -e "${CALLOUT}"
+            echo ""
+            echo "## ⏱️ Timings"
+            echo ""
+            echo "- **npm install:** **${TEST_INSTALL_SEC:-n/a}s**"
+            echo "- **npm test:** **${TEST_SEC:-n/a}s**"
+            echo ""
+            echo "## 🧾 Context"
+            echo ""
+            echo "- **Run:** ${RUN_URL}"
+            echo "- **Repository:** \`${{ github.repository }}\`"
+            echo "- **Workflow:** \`${{ github.workflow }}\`"
+            echo "- **Job:** \`${{ github.job }}\`"
+            echo "- **Event:** \`${{ github.event_name }}\`"
+            echo "- **Actor:** \`${{ github.actor }}\`"
+            echo "- **Ref:** \`${{ github.ref_name }}\`"
+            echo "- **SHA:** ${COMMIT_URL}"
+            echo ""
+            echo "## 🧰 Runtime"
+            echo ""
+            echo "- **Node:** \`$(node -v 2>/dev/null || echo n/a)\`"
+            echo "- **npm:** \`$(npm -v 2>/dev/null || echo n/a)\`"
+            echo ""
+            echo "<details><summary>🔎 Runner details</summary>"
+            echo ""
+            echo "- OS: \`$(uname -a)\`"
+            echo "- UTC time: \`$(date -u)\`"
+            echo ""
+            echo "</details>"
+            echo ""
+            echo "---"
+            echo "_Generated via \`GITHUB_STEP_SUMMARY\`._"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     needs: test
@@ -65,22 +205,115 @@ jobs:
       - name: checkout repo
         uses: actions/checkout@v4
         with:
-            token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: use node.js
-        uses:  actions/setup-node@v4
-        with:  
-          node-version: '20.x'
-      - name: configure github pages
-        uses:  actions/configure-pages@v4
+        uses: actions/setup-node@v4
         with:
-          static_site_generator:  next
-      - run: npm install
-      - run: npm run build
+          node-version: "20.x"
+
+      - name: configure github pages
+        uses: actions/configure-pages@v4
+        with:
+          static_site_generator: next
+
+      - name: Time npm install
+        id: deploy_install
+        shell: bash
+        run: |
+          s=$(date +%s)
+          npm install
+          e=$(date +%s)
+          dur=$((e - s))
+          echo "DEPLOY_INSTALL_SEC=$dur" >> "$GITHUB_ENV"
+          echo "::notice title=Step duration::deploy: npm install took ${dur}s"
+
+      - name: Time npm run build
+        id: deploy_build
+        shell: bash
+        run: |
+          s=$(date +%s)
+          npm run build
+          rc=$?
+          e=$(date +%s)
+          dur=$((e - s))
+          echo "DEPLOY_BUILD_SEC=$dur" >> "$GITHUB_ENV"
+
+          if [ "$rc" -eq 0 ]; then
+            echo "::notice title=Step duration::deploy: npm run build took ${dur}s"
+          else
+            echo "::error title=Deploy build failed::deploy: npm run build failed after ${dur}s"
+          fi
+          exit $rc
+
       - name: upload artifacts
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './out'
+          path: "./out"
+
       - name: deploy
         id: deployment
         uses: actions/deploy-pages@v4
-        
+
+      - name: Deploy job summary
+        if: always()
+        shell: bash
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+          PAGE_URL="${{ steps.deployment.outputs.page_url }}"
+
+          if [ "${{ job.status }}" = "success" ]; then
+            ICON="🚀"
+            WORD="DEPLOYED"
+            CALLOUT="> [!NOTE]\n> Deployment completed successfully."
+          else
+            ICON="💥"
+            WORD="FAILED"
+            CALLOUT="> [!WARNING]\n> Deployment failed. See logs for details."
+          fi
+
+          {
+            echo "# ${ICON} Deploy Job Summary — ${WORD}"
+            echo ""
+            echo -e "${CALLOUT}"
+            echo ""
+            echo "## ⏱️ Timings"
+            echo ""
+            echo "- **npm install:** **${DEPLOY_INSTALL_SEC:-n/a}s**"
+            echo "- **npm run build:** **${DEPLOY_BUILD_SEC:-n/a}s**"
+            echo ""
+            echo "## 🌐 Deployment"
+            echo ""
+            if [ -n "$PAGE_URL" ]; then
+              echo "- **GitHub Pages URL:** ${PAGE_URL}"
+            else
+              echo "- **GitHub Pages URL:** _not available_"
+            fi
+            echo ""
+            echo "## 🧾 Context"
+            echo ""
+            echo "- **Run:** ${RUN_URL}"
+            echo "- **Repository:** \`${{ github.repository }}\`"
+            echo "- **Workflow:** \`${{ github.workflow }}\`"
+            echo "- **Job:** \`${{ github.job }}\`"
+            echo "- **Event:** \`${{ github.event_name }}\`"
+            echo "- **Actor:** \`${{ github.actor }}\`"
+            echo "- **Ref:** \`${{ github.ref_name }}\`"
+            echo "- **SHA:** ${COMMIT_URL}"
+            echo ""
+            echo "## 🧰 Runtime"
+            echo ""
+            echo "- **Node:** \`$(node -v 2>/dev/null || echo n/a)\`"
+            echo "- **npm:** \`$(npm -v 2>/dev/null || echo n/a)\`"
+            echo ""
+            echo "<details><summary>🔎 Runner details</summary>"
+            echo ""
+            echo "- OS: \`$(uname -a)\`"
+            echo "- UTC time: \`$(date -u)\`"
+            echo ""
+            echo "</details>"
+            echo ""
+            echo "---"
+            echo "_Generated via \`GITHUB_STEP_SUMMARY\`._"
+          } >> "$GITHUB_STEP_SUMMARY"
