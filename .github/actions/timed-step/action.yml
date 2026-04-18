@@ -1,0 +1,84 @@
+name: Timed step with summary
+description: Runs a command, measures duration, emits annotations, and appends a rich Markdown section to the Job Summary.
+
+inputs:
+  title:
+    description: Display title for the summary section
+    required: true
+  command:
+    description: Shell command to run (e.g., npm test)
+    required: true
+  warn_threshold_seconds:
+    description: Emit warning annotation if duration exceeds this value (0 disables)
+    required: false
+    default: "0"
+
+runs:
+  using: composite
+  steps:
+    - name: Run timed command
+      shell: bash
+      run: |
+        set +e
+
+        START_EPOCH=$(date +%s)
+        START_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+        # Run the command
+        bash -lc "${{ inputs.command }}"
+        RC=$?
+
+        END_EPOCH=$(date +%s)
+        END_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        DURATION=$((END_EPOCH - START_EPOCH))
+
+        # Build useful links (no secrets)
+        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+
+        # Decide status flair
+        if [ "$RC" -eq 0 ]; then
+          ICON="✅"
+          WORD="SUCCESS"
+          CALLOUT="&gt; [!NOTE]\n&gt; Completed successfully."
+        else
+          ICON="❌"
+          WORD="FAILED"
+          CALLOUT="&gt; [!WARNING]\n&gt; Failed (exit code ${RC})."
+        fi
+
+        # Threshold annotation (uses workflow commands)
+        THRESH="${{ inputs.warn_threshold_seconds }}"
+        if [ "$THRESH" -gt 0 ] &amp;&amp; [ "$DURATION" -gt "$THRESH" ]; then
+          echo "::warning title=Slow step::${{ inputs.title }} took ${DURATION}s (&gt; ${THRESH}s)"
+        else
+          # still surface a low-noise notice
+          echo "::notice title=Step duration::${{ inputs.title }} took ${DURATION}s"
+        fi
+
+        # Append rich section to Job Summary (GITHUB_STEP_SUMMARY)
+        {
+          echo "## ${ICON} ${{ inputs.title }} — ${WORD}"
+          echo ""
+          echo -e "${CALLOUT}"
+          echo ""
+          echo "### ⏱️ Timing"
+          echo ""
+          echo "- **Duration:** **${DURATION}s**"
+          echo "- **Start (UTC):** \`${START_UTC}\`"
+          echo "- **End (UTC):** \`${END_UTC}\`"
+          echo ""
+          echo "### 🧾 Context"
+          echo ""
+          echo "- **Run:** ${RUN_URL} (attempt \`${{ github.run_attempt }}\`)"
+          echo "- **Repo:** \`${{ github.repository }}\`"
+          echo "- **Ref:** \`${{ github.ref_name }}\`"
+          echo "- **SHA:** ${COMMIT_URL}"
+          echo "- **Actor:** \`${{ github.actor }}\`"
+          echo "- **Event:** \`${{ github.event_name }}\`"
+          echo ""
+          echo ""
+          echo ""
+        } &gt; "$GITHUB_STEP_SUMMARY"
+
+        exit $RC
