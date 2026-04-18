@@ -28,7 +28,30 @@ jobs:
         with:
           node-version: '20.x'
       - run: npm install
-      - run: npm test
+      - name: Run tests (timed)
+      id: timed_tests
+      shell: bash
+      run: |
+        start=$(date +%s)
+        # Run tests
+        npm test
+        test_exit=$?
+        
+        end=$(date +%s)
+        duration=$((end - start))
+        
+        # 1) Surface in the Actions "Summary" tab (no log digging)
+            echo "### Test step duration" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- \`npm test\` took **${duration}s**" >> "$GITHUB_STEP_SUMMARY"
+        
+            # 2) Optional: also create an annotation visible in the UI
+            # (switch to ::warning:: if you want to highlight slow runs)
+            echo "::notice title=Step duration::npm test took ${duration}s"
+        
+            # Preserve original test result
+            exit $test_exit
+
   deploy:
     needs: test
 
